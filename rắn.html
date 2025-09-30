@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rắn Săn Mồi (Snake) - Có Firebase & AI</title>
+    <!-- Tải Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Thiết lập font Inter */
+        html { font-family: 'Inter', sans-serif; }
+        /* Đảm bảo canvas có kích thước cố định trong grid */
+        #gameCanvas {
+            background-color: #2d3748; /* Màu nền tối cho game */
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        /* Ẩn thanh cuộn nếu có */
+        body { overflow-x: hidden; }
+        /* Đặt messageBox bao phủ Canvas */
+        #gameContainer {
+            position: relative;
+        }
+    </style>
+    <!-- Cấu hình Tailwind cho màu sắc và bo góc -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'snake-green': '#48bb78',
+                        'food-red': '#f56565',
+                        'dark-bg': '#1a202c',
+                        'light-card': '#2d3748',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-dark-bg text-white min-h-screen p-4 flex flex-col items-center justify-center">
+
+    <div class="w-full max-w-5xl flex flex-col lg:flex-row gap-6">
+
+        <!-- Cột Game Chính -->
+        <div class="flex flex-col items-center flex-grow">
+            <h1 class="text-4xl font-extrabold mb-4 text-snake-green">Rắn Săn Mồi</h1>
+
+            <!-- Hiển thị thông tin người dùng -->
+            <div id="user-info" class="mb-4 text-sm text-gray-400">Đang tải...</div>
+
+            <!-- Khung trò chơi và điểm số -->
+            <div id="gameContainer" class="bg-light-card p-6 rounded-xl shadow-2xl w-full max-w-md">
+                <div class="flex justify-between items-center mb-4">
+                    <p class="text-xl font-semibold">Điểm: <span id="score" class="text-yellow-400">0</span></p>
+                    <button id="startButton" class="bg-snake-green hover:bg-green-600 text-dark-bg font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md">Bắt Đầu</button>
+                </div>
+                <!-- Canvas Game -->
+                <canvas id="gameCanvas" width="400" height="400" class="w-full max-w-full aspect-square"></canvas>
+
+                <!-- Màn hình Game Over / Hướng dẫn -->
+                <!-- messageBox nằm tuyệt đối so với gameContainer -->
+                <div id="messageBox" class="absolute inset-0 bg-dark-bg bg-opacity-90 rounded-xl flex items-center justify-center hidden">
+                    <div class="text-center p-6 bg-light-card rounded-xl shadow-lg w-11/12 max-w-xs">
+                        <p id="messageText" class="text-2xl font-bold mb-4">Nhấn BẮT ĐẦU để chơi!</p>
+                        <p class="text-sm text-gray-400">Dùng các phím Mũi tên hoặc WASD để điều khiển.</p>
+
+                        <!-- Gemini Feature Integration -->
+                        <button id="generateCommentaryButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl transition duration-200 shadow-lg mt-4 hidden">
+                            Nhận Bình Luận Score ✨
+                        </button>
+                        <div id="loadingIndicator" class="mt-4 hidden text-sm text-blue-400 font-semibold">Đang tạo bình luận...</div>
+                        <div id="aiCommentary" class="mt-4 p-3 bg-gray-800 rounded-lg text-sm text-left hidden">
+                            <p class="font-semibold text-blue-400">Bình luận của Gemini:</p>
+                            <p id="commentaryText" class="mt-1 text-gray-300 italic"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cột Điểm Cao (High Scores) -->
+        <div class="w-full lg:w-96 bg-light-card p-6 rounded-xl shadow-2xl">
+            <h2 class="text-2xl font-bold mb-4 text-center text-red-400">Bảng Xếp Hạng</h2>
+            <div id="highScoresList" class="space-y-2">
+                <!-- Điểm cao sẽ được chèn ở đây -->
+                <p class="text-center text-gray-400">Đang tải điểm cao...</p>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script Game và Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, query, limit, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Thiết lập Debug Logging cho Firestore
+        setLogLevel('Debug');
+
+        // --- Cấu hình Firebase (Sử dụng biến toàn cục từ môi trường Canvas) ---
+        // Khi xuất ra ngoài, các biến __app_id, __firebase_config, __initial_auth_token sẽ không tồn tại.
+        // Game sẽ tự động sử dụng giá trị mặc định/ẩn danh.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { /* Thêm cấu hình Firebase công khai của bạn ở đây nếu cần */ };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId = null;
+        let highScoresRef = null;
+        let currentHighScores = [];
+        let isAuthReady = false;
+
+        // --- Biến Game ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const messageBox = document.getElementById('messageBox');
+        const messageText = document.getElementById('messageText');
+        const startButton = document.getElementById('startButton');
+        const highScoresList = document.getElementById('highScoresList');
+        const userInfoDisplay = document.getElementById('user-info');
+        // Gemini API DOM elements
+        const generateCommentaryButton = document.getElementById('generateCommentaryButton');
+        const aiCommentaryDiv = document.getElementById('aiCommentary');
+        const commentaryText = document.getElementById('commentaryText');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+
+        const tileCount = 20; // Số ô trên mỗi cạnh (20x20 grid)
+        const gridSize = canvas.width / tileCount; // Kích thước mỗi ô
+        let snake = [];
+        let food = {};
+        let dx = 0; // x velocity (tốc độ theo trục X)
+        let dy = 0; // y velocity (tốc độ theo trục Y)
+        let score = 0;
+        let gameInterval;
+        let gameSpeed = 150; // Tốc độ game ban đầu (milliseconds)
+        let isGameOver = true;
+        let gameLocked = false; // Ngăn chặn thay đổi hướng liên tục
+
+        // --- Chức năng Firebase ---
+
+        // 1. Khởi tạo và Đăng nhập
+        async function initializeFirebase() {
+            if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+                console.warn("Firebase config is missing or empty. High scores may not work outside of Canvas.");
+                userInfoDisplay.textContent = 'Chế độ ẩn danh (Không có Bảng xếp hạng)';
+                isAuthReady = true;
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Đường dẫn tới collection công khai để lưu Điểm Cao
+                highScoresRef = collection(db, `artifacts/${appId}/public/data/snake_highscores`);
+
+                // Đăng nhập bằng token tùy chỉnh hoặc ẩn danh
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Lắng nghe thay đổi trạng thái Auth
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userInfoDisplay.innerHTML = `Người chơi: <span class="text-yellow-400 font-medium">${userId.substring(0, 8)}...</span>`;
+                        isAuthReady = true;
+                        loadHighScores(); // Tải điểm cao khi Auth sẵn sàng
+                    } else {
+                        userId = null;
+                        userInfoDisplay.textContent = 'Người chơi ẩn danh (Đăng nhập để lưu điểm)';
+                        isAuthReady = true;
+                    }
+                });
+
+            } catch (error) {
+                console.error("Lỗi khi khởi tạo Firebase:", error);
+                userInfoDisplay.textContent = 'Lỗi kết nối Firebase.';
+            }
+        }
+
+        // 2. Tải Điểm Cao theo thời gian thực (onSnapshot)
+        function loadHighScores() {
+            if (!isAuthReady || !highScoresRef) return;
+
+            // Truy vấn lấy dữ liệu. Dùng limit và sort client-side để tránh lỗi index.
+            const q = query(highScoresRef, limit(20));
+
+            onSnapshot(q, (snapshot) => {
+                const fetchedScores = [];
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    fetchedScores.push({
+                        id: doc.id,
+                        score: data.score || 0,
+                        username: data.username || `Người chơi ${doc.id.substring(0, 4)}`,
+                        timestamp: data.timestamp ? data.timestamp.toDate() : new Date(),
+                        isCurrentUser: doc.id === userId
+                    });
+                });
+
+                // Sắp xếp client-side: giảm dần theo điểm, tăng dần theo thời gian (cùng điểm)
+                fetchedScores.sort((a, b) => {
+                    if (b.score !== a.score) {
+                        return b.score - a.score; // Sắp xếp theo điểm giảm dần
+                    }
+                    return a.timestamp - b.timestamp; // Sắp xếp theo thời gian tăng dần
+                });
+
+                currentHighScores = fetchedScores.slice(0, 10); // Chỉ giữ top 10
+
+                renderHighScores(currentHighScores);
+            }, (error) => {
+                console.error("Lỗi tải điểm cao:", error);
+                highScoresList.innerHTML = `<p class="text-center text-red-500">Lỗi: Không thể tải điểm cao.</p>`;
+            });
+        }
+
+        // 3. Hiển thị Điểm Cao
+        function renderHighScores(scores) {
+            highScoresList.innerHTML = scores.map((item, index) => {
+                const rank = index + 1;
+                const baseClasses = "flex justify-between p-2 rounded-lg text-sm transition duration-150";
+                const rankColor = rank === 1 ? 'text-yellow-400' : rank === 2 ? 'text-gray-300' : rank === 3 ? 'text-amber-600' : 'text-gray-300';
+                const userHighlight = item.isCurrentUser ? 'bg-green-700 font-bold' : 'bg-gray-700';
+                const rankSymbol = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+
+                return `
+                    <div class="${baseClasses} ${userHighlight}">
+                        <span class="${rankColor} font-extrabold w-8">${rankSymbol}</span>
+                        <span class="truncate flex-1 ml-2">${item.username.split(' ')[1] ? item.username.split(' ')[1] : item.username}</span>
+                        <span class="font-mono text-lg text-right">${item.score}</span>
+                    </div>
+                `;
+            }).join('');
+
+            if (scores.length === 0) {
+                 highScoresList.innerHTML = `<p class="text-center text-gray-400">Chưa có điểm cao nào. Hãy là người đầu tiên!</p>`;
+            }
+        }
+
+        // 4. Lưu Điểm Cao Cá Nhân
+        async function saveHighScore(newScore) {
+            if (!userId || !highScoresRef) {
+                console.warn("Không thể lưu điểm: Chưa đăng nhập hoặc Firebase chưa sẵn sàng.");
+                return;
+            }
+
+            const userDocRef = doc(highScoresRef, userId);
+
+            try {
+                // Lưu điểm mới. merge: true đảm bảo không ghi đè các trường khác.
+                // Firestore sẽ tự động cập nhật nếu điểm này cao hơn điểm hiện tại của user.
+                await setDoc(userDocRef, {
+                    score: newScore,
+                    username: `Player ${userId.substring(0, 4)}`,
+                    userId: userId,
+                    timestamp: serverTimestamp(),
+                }, { merge: true });
+
+                console.log(`Điểm ${newScore} đã được lưu thành công cho user ${userId}`);
+            } catch (e) {
+                console.error("Lỗi khi lưu điểm cao:", e);
+            }
+        }
+
+        // --- Chức năng Game ---
+
+        function placeFood() {
+            // Đặt thức ăn ở vị trí ngẫu nhiên không trùng với thân rắn
+            do {
+                food.x = Math.floor(Math.random() * tileCount);
+                food.y = Math.floor(Math.random() * tileCount);
+            } while (snake.some(segment => segment.x === food.x && segment.y === food.y));
+        }
+
+        function startGame() {
+            if (!isGameOver) return;
+
+            // Reset game state
+            snake = [{ x: Math.floor(tileCount / 2), y: Math.floor(tileCount / 2) }];
+            dx = 1;
+            dy = 0;
+            score = 0;
+            gameSpeed = 150;
+            isGameOver = false;
+            gameLocked = false;
+            scoreDisplay.textContent = score;
+
+            placeFood();
+
+            messageBox.classList.add('hidden');
+            startButton.textContent = 'Đang Chơi...';
+            startButton.disabled = true;
+
+            // Bắt đầu vòng lặp game
+            clearInterval(gameInterval);
+            gameInterval = setInterval(gameLoop, gameSpeed);
+        }
+
+        function gameLoop() {
+            if (isGameOver) {
+                clearInterval(gameInterval);
+                return;
+            }
+            update();
+            draw();
+            gameLocked = false; // Mở khóa cho phép nhận hướng mới
+        }
+
+        function update() {
+            // Tạo đầu rắn mới
+            const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+            // Kiểm tra va chạm (Tường hoặc Tự thân)
+            if (checkCollision(head)) {
+                gameOver();
+                return;
+            }
+
+            // Thêm đầu rắn mới vào mảng
+            snake.unshift(head);
+
+            // Kiểm tra ăn thức ăn
+            if (head.x === food.x && head.y === food.y) {
+                score++;
+                scoreDisplay.textContent = score;
+                placeFood(); // Đặt thức ăn mới
+
+                // Tăng tốc độ game sau mỗi 5 điểm
+                if (score % 5 === 0 && gameSpeed > 50) {
+                    gameSpeed -= 10;
+                    clearInterval(gameInterval);
+                    gameInterval = setInterval(gameLoop, gameSpeed);
+                }
+            } else {
+                // Nếu không ăn, loại bỏ đuôi (rắn di chuyển)
+                snake.pop();
+            }
+        }
+
+        function checkCollision(head) {
+            // Va chạm tường
+            const wallCollision = head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount;
+            // Va chạm thân (bỏ qua đầu)
+            const selfCollision = snake.slice(1).some(segment => segment.x === head.x && segment.y === head.y);
+
+            return wallCollision || selfCollision;
+        }
+
+        function draw() {
+            // Xóa canvas
+            ctx.fillStyle = '#2d3748';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Vẽ rắn
+            snake.forEach((segment, index) => {
+                ctx.fillStyle = index === 0 ? '#68d391' : '#48bb78'; // Đầu rắn màu khác
+                ctx.fillRect(segment.x * gridSize, segment.y * gridSize, gridSize - 1, gridSize - 1);
+            });
+
+            // Vẽ thức ăn
+            ctx.fillStyle = '#f56565';
+            ctx.beginPath();
+            const centerX = food.x * gridSize + gridSize / 2;
+            const centerY = food.y * gridSize + gridSize / 2;
+            const radius = gridSize / 2;
+            ctx.arc(centerX, centerY, radius - 2, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            clearInterval(gameInterval);
+            startButton.textContent = 'Chơi Lại';
+            startButton.disabled = false;
+
+            messageText.innerHTML = `Game Over! Điểm của bạn: <span class="text-yellow-400 font-extrabold">${score}</span>`;
+            messageBox.classList.remove('hidden');
+
+            // Hiển thị nút bình luận AI và đặt lại trạng thái bình luận
+            generateCommentaryButton.classList.remove('hidden');
+            aiCommentaryDiv.classList.add('hidden');
+            commentaryText.textContent = '';
+            loadingIndicator.classList.add('hidden');
+
+            // Đặt sự kiện cho nút để gọi Gemini API
+            generateCommentaryButton.onclick = () => generateCommentary(score);
+
+            // Lưu điểm cao
+            if (score > 0) {
+                saveHighScore(score);
+            }
+        }
+
+        // --- Xử lý Input ---
+
+        function handleKeydown(event) {
+            // Cho phép phím ENTER để bắt đầu game khi đang ở màn hình chờ
+            if (isGameOver && event.key === 'Enter') {
+                startGame();
+                return;
+            }
+
+            if (isGameOver || gameLocked) return;
+
+            const keyPressed = event.key;
+            let newDx = dx;
+            let newDy = dy;
+
+            switch (keyPressed) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    if (dy === 0) { newDx = 0; newDy = -1; }
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    if (dy === 0) { newDx = 0; newDy = 1; }
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    if (dx === 0) { newDx = -1; newDy = 0; }
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    if (dx === 0) { newDx = 1; newDy = 0; }
+                    break;
+                default:
+                    return; // Bỏ qua các phím khác
+            }
+
+            // Chỉ cho phép thay đổi hướng nếu hướng mới không đối diện hướng hiện tại
+            if (newDx !== -dx || newDy !== -dy) {
+                dx = newDx;
+                dy = newDy;
+                gameLocked = true; // Khóa input cho đến frame tiếp theo
+            }
+        }
+
+        // --- Chức năng Gemini API ---
+
+        const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+        const apiKey = ""; // Canvas sẽ tự động cung cấp khóa API.
+
+        async function generateCommentary(finalScore) {
+            generateCommentaryButton.classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+            aiCommentaryDiv.classList.add('hidden');
+            commentaryText.textContent = '';
+
+            const systemPrompt = "Bạn là một bình luận viên thể thao chuyên nghiệp và hài hước cho trò chơi Rắn Săn Mồi. Hãy đưa ra một bình luận ngắn gọn (tối đa 2 câu) về điểm số cuối cùng của người chơi. Tùy thuộc vào điểm số, bình luận có thể là: kịch tính, chế giễu nhẹ nhàng, khích lệ, hoặc cực kỳ ca ngợi. Chỉ trả lời bằng tiếng Việt.";
+            const userQuery = `Người chơi đã đạt được ${finalScore} điểm. Hãy bình luận về màn trình diễn này.`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+            };
+
+            const maxRetries = 5;
+            let delay = 1000; // 1 second
+            let responseText = "Lỗi: Không thể nhận bình luận từ AI.";
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && i < maxRetries - 1) {
+                            // Quá nhiều yêu cầu, thử lại
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            delay *= 2; // Tăng dần thời gian chờ
+                            continue;
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (text) {
+                        responseText = text;
+                        break; // Thành công
+                    }
+                } catch (error) {
+                    console.error("Lỗi API Gemini:", error);
+                }
+
+                if (i < maxRetries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+            }
+
+            loadingIndicator.classList.add('hidden');
+            aiCommentaryDiv.classList.remove('hidden');
+            commentaryText.textContent = responseText;
+        }
+
+        // --- Khởi tạo ---
+
+        window.onload = function () {
+            // Kích hoạt Firebase và Auth
+            initializeFirebase();
+
+            // Đặt sự kiện cho nút Start
+            startButton.addEventListener('click', startGame);
+
+            // Đặt sự kiện lắng nghe phím
+            document.addEventListener('keydown', handleKeydown);
+
+            // Vẽ lần đầu tiên để hiển thị màn hình chờ
+            draw();
+            messageBox.classList.remove('hidden');
+            // Cập nhật thông báo: Thêm phím ENTER
+            messageText.textContent = 'Nhấn BẮT ĐẦU hoặc phím ENTER để chơi! Sau đó dùng các phím mũi tên hoặc WASD để điều khiển.';
+        };
+    </script>
+</body>
+</html>
